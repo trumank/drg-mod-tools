@@ -29,7 +29,8 @@ jobs:
       - uses: actions/checkout@v3
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: drg_modio_audit
+          bin: modio_audit,mod_lint
           tar: none
           zip: all
+          archive: ${{ github.event.repository.name }}-$target
           token: ${{ secrets.GITHUB_TOKEN }}
