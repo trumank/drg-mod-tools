@@ -6,10 +6,17 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use colored::Colorize;
 use unpak::PakReader;
 use unreal_asset::{reader::asset_trait::AssetTrait, Asset};
 
 fn main() -> Result<()> {
+    // https://github.com/mackwic/colored/issues/110
+    #[cfg(windows)]
+    {
+        let _varname = colored::control::set_virtual_terminal(true).unwrap_or(());
+    }
+
     if let Some(path) = std::env::args().nth(1) {
         let mut pak = get_pak(path)?;
         let mount_point = PathBuf::from(pak.mount_point());
@@ -42,7 +49,7 @@ fn main() -> Result<()> {
                 .filter(|f| f != "FSD/AssetRegistry.bin")
                 .collect::<BTreeSet<_>>();
             if !extraneous_files.is_empty() {
-                println!("extraneous files:");
+                println!("{}", "extraneous files:".bold());
                 for f in extraneous_files {
                     println!("\t{}", f);
                 }
@@ -85,7 +92,7 @@ fn main() -> Result<()> {
                 }
             }
             if !split_pairs.is_empty() {
-                println!("split asset pairs:");
+                println!("{}", "split asset pairs:".bold());
                 for f in split_pairs {
                     println!("\t{}", f);
                 }
@@ -114,16 +121,16 @@ fn main() -> Result<()> {
                         let auto_verify = match &t {
                             Ok(t) => {
                                 if auto_verified.contains(t.as_str()) {
-                                    "✔"
+                                    AutoVerify::Pass
                                 } else {
-                                    "✘"
+                                    AutoVerify::Fail
                                 }
                             }
-                            _ => "?",
+                            _ => AutoVerify::Unknown,
                         };
                         let msg = match t {
-                            Ok(t) => t,
-                            Err(e) => format!("{}", e),
+                            Ok(t) => AssetType::Known(t),
+                            Err(e) => AssetType::Unknown(format!("{}", e)),
                         };
                         (auto_verify, msg, f)
                     })
@@ -131,9 +138,14 @@ fn main() -> Result<()> {
 
                 auto_verified_results.sort();
 
-                println!("{:12} {:30} {}", "auto-verify", "class", "asset path");
+                println!(
+                    "{:12} {:30} {}",
+                    "auto-verify".bold(),
+                    "class".bold(),
+                    "asset path".bold()
+                );
                 for (a, m, f) in auto_verified_results {
-                    println!("{:^12} {:30} {}", a, m, f);
+                    println!("{:^12} {:30} {}", a.output(), m.output(), f);
                 }
             }
         } else {
@@ -146,6 +158,38 @@ fn main() -> Result<()> {
         println!("Usage: {} <mod .pak or .zip>", env!("CARGO_BIN_NAME"))
     }
     Ok(())
+}
+
+#[derive(Debug, Ord, Eq, PartialEq, PartialOrd)]
+enum AutoVerify {
+    Pass,
+    Fail,
+    Unknown,
+}
+
+impl AutoVerify {
+    fn output(&self) -> colored::ColoredString {
+        match self {
+            AutoVerify::Pass => "yes".green(),
+            AutoVerify::Fail => "no".red(),
+            AutoVerify::Unknown => "?".yellow(),
+        }
+    }
+}
+
+#[derive(Debug, Ord, Eq, PartialEq, PartialOrd)]
+enum AssetType {
+    Known(String),
+    Unknown(String),
+}
+
+impl AssetType {
+    fn output(&self) -> colored::ColoredString {
+        match self {
+            AssetType::Known(s) => s.normal(),
+            AssetType::Unknown(s) => s.yellow(),
+        }
+    }
 }
 
 fn get_type(asset: &Asset) -> Result<String> {

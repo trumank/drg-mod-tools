@@ -1,10 +1,11 @@
 [package]
 name = "drg_mod_tools"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [dependencies]
 anyhow = "1.0.68"
+colored = "2.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.91"
 unpak = { git = "https://github.com/trumank/unpak.git", version = "0.2.0" }
