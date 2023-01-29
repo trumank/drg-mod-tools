@@ -1,5 +1,5 @@
 [package]
-name = "drg_modio_audit"
+name = "drg_mod_tools"
 version = "0.1.1"
 edition = "2021"
 
