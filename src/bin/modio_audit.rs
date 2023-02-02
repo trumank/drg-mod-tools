@@ -94,7 +94,7 @@ fn main() -> Result<()> {
 }
 
 fn find_mod_assets<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
-    let pak = unpak::PakReader::new_any(BufReader::new(File::open(path)?), None)?;
+    let pak = repak::PakReader::new_any(BufReader::new(File::open(path)?), None)?;
     let mount_point = Path::new(pak.mount_point());
     let files = pak
         .files()

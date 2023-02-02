@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use colored::Colorize;
-use unpak::PakReader;
+use repak::PakReader;
 use unreal_asset::{reader::asset_trait::AssetTrait, Asset};
 
 fn main() -> Result<()> {

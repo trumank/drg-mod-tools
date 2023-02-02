@@ -8,7 +8,7 @@ anyhow = "1.0.68"
 colored = "2.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.91"
-unpak = { git = "https://github.com/trumank/unpak.git", version = "0.2.0" }
+repak = { git = "https://github.com/trumank/repak.git", version = "0.1.0" }
 unreal_asset = { git = "https://github.com/astrotechies/unrealmodding", package = "unreal_asset" }
 zip = { version = "0.6.3", default-features = false, features = [
   "aes-crypto",

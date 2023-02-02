@@ -189,9 +189,9 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "colored",
+ "repak",
  "serde",
  "serde_json",
- "unpak",
  "unreal_asset",
  "zip",
 ]
@@ -440,6 +440,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 
 [[package]]
+name = "repak"
+version = "0.1.0"
+source = "git+https://github.com/trumank/repak.git#d2bd98bb53657fe8dec6340f6ff3722574805c1f"
+dependencies = [
+ "aes 0.8.2",
+ "byteorder",
+ "flate2",
+ "sha1",
+ "strum",
+ "thiserror",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -639,19 +652,6 @@ name = "unicode-ident"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84a22b9f218b40614adcb3f4ff08b703773ad44fa9423e4e0d346d5db86e4ebc"
-
-[[package]]
-name = "unpak"
-version = "0.2.0"
-source = "git+https://github.com/trumank/unpak.git#8d009c784e4f1dd6698a9dffe9f114f37bcc5256"
-dependencies = [
- "aes 0.8.2",
- "byteorder",
- "flate2",
- "sha1",
- "strum",
- "thiserror",
-]
 
 [[package]]
 name = "unreal_asset"
