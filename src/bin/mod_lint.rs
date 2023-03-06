@@ -52,7 +52,7 @@ fn main() -> Result<()> {
             if !extraneous_files.is_empty() {
                 println!("{}", "extraneous files:".bold());
                 for f in extraneous_files {
-                    println!("\t{}", f);
+                    println!("\t{f}");
                 }
             }
             let mut split_pairs = BTreeSet::new();
@@ -68,12 +68,15 @@ fn main() -> Result<()> {
                         ));
                     }
                 } else if (umap || uasset) && uexp {
-                    let uasset = Cursor::new(pak.get(&if uasset {
-                        format!("{}.uasset", f)
-                    } else {
-                        format!("{}.umap", f)
-                    }, &mut reader)?);
-                    let uexp = Cursor::new(pak.get(&format!("{}.uexp", f), &mut reader)?);
+                    let uasset = Cursor::new(pak.get(
+                        &if uasset {
+                            format!("{f}.uasset")
+                        } else {
+                            format!("{f}.umap")
+                        },
+                        &mut reader,
+                    )?);
+                    let uexp = Cursor::new(pak.get(&format!("{f}.uexp"), &mut reader)?);
                     let result = std::panic::catch_unwind(|| {
                         let mut asset = unreal_asset::Asset::new(uasset, Some(uexp));
                         asset.set_engine_version(
@@ -95,7 +98,7 @@ fn main() -> Result<()> {
             if !split_pairs.is_empty() {
                 println!("{}", "split asset pairs:".bold());
                 for f in split_pairs {
-                    println!("\t{}", f);
+                    println!("\t{f}");
                 }
             }
             if !asset_types.is_empty() {
@@ -131,7 +134,7 @@ fn main() -> Result<()> {
                         };
                         let msg = match t {
                             Ok(t) => AssetType::Known(t),
-                            Err(e) => AssetType::Unknown(format!("{}", e)),
+                            Err(e) => AssetType::Unknown(format!("{e}")),
                         };
                         (auto_verify, msg, f)
                     })
@@ -229,8 +232,6 @@ fn get_pak<P: AsRef<Path>>(path: P) -> Result<Box<dyn Reader>> {
             }
             Err(anyhow!("no pak found in zip"))
         }
-        _ => {
-            Ok(Box::new(BufReader::new(file)))
-        }
+        _ => Ok(Box::new(BufReader::new(file))),
     }
 }

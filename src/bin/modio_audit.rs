@@ -119,10 +119,8 @@ fn find_pak<P: AsRef<Path>>(dir: P) -> Result<Option<PathBuf>> {
             if let Some(path) = find_pak(&path)? {
                 return Ok(Some(path));
             }
-        } else {
-            if path.extension() == Some(std::ffi::OsStr::new("pak")) {
-                return Ok(Some(path.into()));
-            }
+        } else if path.extension() == Some(std::ffi::OsStr::new("pak")) {
+            return Ok(Some(path));
         }
     }
     Ok(None)
