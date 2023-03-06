@@ -17,8 +17,8 @@ fn main() -> Result<()> {
         let _varname = colored::control::set_virtual_terminal(true).unwrap_or(());
     }
 
-    if let Some(path) = std::env::args().nth(1) {
-        let mut reader = get_pak(path)?;
+    if let Some(url) = std::env::args().nth(1) {
+        let mut reader = get_pak(&url)?;
         let pak = PakReader::new_any(&mut reader, None)?;
         let mount_point = PathBuf::from(pak.mount_point());
         if let Ok(sanitized) = mount_point.strip_prefix("../../../") {
@@ -77,6 +77,7 @@ fn main() -> Result<()> {
                         &mut reader,
                     )?);
                     let uexp = Cursor::new(pak.get(&format!("{f}.uexp"), &mut reader)?);
+                    std::panic::set_hook(Box::new(|_info| {}));
                     let result = std::panic::catch_unwind(|| {
                         let mut asset = unreal_asset::Asset::new(uasset, Some(uexp));
                         asset.set_engine_version(
@@ -216,22 +217,135 @@ fn get_type<R: Read + Seek>(asset: &Asset<R>) -> Result<String> {
 trait Reader: BufRead + Seek {}
 impl<T> Reader for T where T: BufRead + Seek {}
 
-fn get_pak<P: AsRef<Path>>(path: P) -> Result<Box<dyn Reader>> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file.try_clone()?);
+fn get_pak(url: &str) -> Result<Box<dyn Reader>> {
+    let re = regex::Regex::new(
+        r"^https?://(mod\.io/g/drg/m/|drg\.(old\.)?mod\.io/)(?P<name_id>[^/#]+)$",
+    )
+    .unwrap();
 
-    match zip::ZipArchive::new(reader) {
-        Ok(mut archive) => {
-            for i in 0..archive.len() {
+    let reader: Box<dyn Reader> = if let Some(captures) = re.captures(url) {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .enable_io()
+            .build()
+            .unwrap()
+            .block_on(async { get_modio_mod(captures.name("name_id").unwrap().as_str()).await })?
+    } else {
+        Box::new(BufReader::new(File::open(url)?))
+    };
+
+    get_pak_from_data(reader)
+}
+
+fn get_pak_from_data(mut data: Box<dyn Reader>) -> Result<Box<dyn Reader>> {
+    if let Ok(mut archive) = zip::ZipArchive::new(&mut data) {
+        (0..archive.len())
+            .map(|i| -> Result<Option<Box<dyn Reader>>> {
                 let mut file = archive.by_index(i)?;
-                if file.is_file() && file.name().to_lowercase().ends_with(".pak") {
-                    let mut buffer: Vec<u8> = vec![];
-                    file.read_to_end(&mut buffer)?;
-                    return Ok(Box::new(Cursor::new(buffer)));
+                match file.enclosed_name() {
+                    Some(p) => {
+                        if file.is_file() && p.extension().filter(|e| e == &"pak").is_some() {
+                            let mut buf = vec![];
+                            file.read_to_end(&mut buf)?;
+                            Ok(Some(Box::new(Cursor::new(buf))))
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                    None => Ok(None),
                 }
-            }
-            Err(anyhow!("no pak found in zip"))
+            })
+            .find_map(|e| e.transpose())
+            .ok_or_else(|| anyhow!("Zip does not contain pak"))?
+    } else {
+        data.rewind()?;
+        Ok(data)
+    }
+}
+
+fn get_modio_key() -> Result<String> {
+    use directories::BaseDirs;
+    let key_path = if let Some(base_dirs) = BaseDirs::new() {
+        let dir = base_dirs.config_dir().join(env!("CARGO_PKG_NAME"));
+        Some((dir.join("modio_key.txt"), dir))
+    } else {
+        eprintln!("could not determine config path to save key");
+        None
+    };
+
+    let key = key_path.as_ref().and_then(|p| {
+        std::fs::read_to_string(&p.0)
+            .ok()
+            .map(|k| k.trim().to_owned())
+    });
+    Ok(if let Some(key) = key {
+        key
+    } else {
+        println!("No saved modio API key found, please generate one by going to https://mod.io/me/access#api and pasting it here");
+        let key = rpassword::prompt_password("API key: ")?;
+        if let Some(key_path) = key_path {
+            std::fs::create_dir_all(&key_path.1)?;
+            println!("writing modio API key to {}", key_path.0.display());
+            std::fs::write(key_path.0, &key)?;
         }
-        _ => Ok(Box::new(BufReader::new(file))),
+        key
+    })
+}
+
+const MODIO_DRG_ID: u32 = 2475;
+async fn get_modio_mod(name_id: &str) -> Result<Box<dyn Reader>> {
+    let modio = modio::Modio::new(modio::Credentials::new(get_modio_key()?))?;
+
+    use modio::filter::Eq;
+
+    let mut mods = modio
+        .game(MODIO_DRG_ID)
+        .mods()
+        .search(modio::mods::filters::NameId::eq(name_id))
+        .collect()
+        .await?;
+    if mods.len() > 1 {
+        Err(anyhow!(
+            "multiple mods returned for mod name_id {}",
+            name_id,
+        ))
+    } else if let Some(mod_) = mods.pop() {
+        let file = mod_
+            .modfile
+            .ok_or_else(|| anyhow!("mod {name_id} does not have an associated modfile"))?;
+
+        let filename = file.filename.to_owned();
+        println!(
+            "downloading mod {} file_id={} to {}...",
+            name_id, file.id, filename
+        );
+
+        use futures_util::TryStreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        let download_bar = indicatif::ProgressBar::new(file.filesize);
+        download_bar.set_style(indicatif::ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")?.progress_chars("#>-"));
+
+        let mut stream = Box::pin(
+            modio
+                .download(modio::download::DownloadAction::FileObj(Box::new(file)))
+                .stream(),
+        );
+        let mut cursor = Cursor::new(vec![]);
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(filename)
+            .await?;
+        while let Some(bytes) = stream.try_next().await? {
+            cursor.write_all(&bytes).await?;
+            file.write_all(&bytes).await?;
+            download_bar.inc(bytes.len() as u64);
+        }
+
+        Ok(Box::new(cursor))
+    } else {
+        Err(anyhow!("no mods returned for mod name_id {}", &name_id))
     }
 }
