@@ -18,7 +18,8 @@ fn main() -> Result<()> {
     }
 
     if let Some(path) = std::env::args().nth(1) {
-        let mut pak = get_pak(path)?;
+        let mut reader = get_pak(path)?;
+        let pak = PakReader::new_any(&mut reader, None)?;
         let mount_point = PathBuf::from(pak.mount_point());
         if let Ok(sanitized) = mount_point.strip_prefix("../../../") {
             let valid_extensions =
@@ -67,12 +68,12 @@ fn main() -> Result<()> {
                         ));
                     }
                 } else if (umap || uasset) && uexp {
-                    let uasset = pak.get(&if uasset {
+                    let uasset = Cursor::new(pak.get(&if uasset {
                         format!("{}.uasset", f)
                     } else {
                         format!("{}.umap", f)
-                    })?;
-                    let uexp = pak.get(&format!("{}.uexp", f))?;
+                    }, &mut reader)?);
+                    let uexp = Cursor::new(pak.get(&format!("{}.uexp", f), &mut reader)?);
                     let result = std::panic::catch_unwind(|| {
                         let mut asset = unreal_asset::Asset::new(uasset, Some(uexp));
                         asset.set_engine_version(
@@ -192,7 +193,7 @@ impl AssetType {
     }
 }
 
-fn get_type(asset: &Asset) -> Result<String> {
+fn get_type<R: Read + Seek>(asset: &Asset<R>) -> Result<String> {
     use unreal_asset::exports::ExportBaseTrait;
 
     for e in &asset.exports {
@@ -212,7 +213,7 @@ fn get_type(asset: &Asset) -> Result<String> {
 trait Reader: BufRead + Seek {}
 impl<T> Reader for T where T: BufRead + Seek {}
 
-fn get_pak<P: AsRef<Path>>(path: P) -> Result<PakReader<Box<dyn Reader>>> {
+fn get_pak<P: AsRef<Path>>(path: P) -> Result<Box<dyn Reader>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file.try_clone()?);
 
@@ -223,15 +224,13 @@ fn get_pak<P: AsRef<Path>>(path: P) -> Result<PakReader<Box<dyn Reader>>> {
                 if file.is_file() && file.name().to_lowercase().ends_with(".pak") {
                     let mut buffer: Vec<u8> = vec![];
                     file.read_to_end(&mut buffer)?;
-                    let reader: Box<dyn Reader> = Box::new(Cursor::new(buffer));
-                    return Ok(PakReader::new_any(reader, None)?);
+                    return Ok(Box::new(Cursor::new(buffer)));
                 }
             }
             Err(anyhow!("no pak found in zip"))
         }
         _ => {
-            let reader: Box<dyn Reader> = Box::new(BufReader::new(file));
-            Ok(PakReader::new_any(reader, None)?)
+            Ok(Box::new(BufReader::new(file)))
         }
     }
 }
