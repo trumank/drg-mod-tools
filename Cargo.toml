@@ -4,21 +4,21 @@ version = "0.1.4"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.68"
+anyhow = "1.0.71"
 colored = "2.0.0"
-serde = { version = "1.0.152", features = ["derive"] }
-serde_json = "1.0.91"
+serde = { version = "1.0.163", features = ["derive"] }
+serde_json = "1.0.96"
 repak = { git = "https://github.com/trumank/repak.git", version = "0.1.0" }
 unreal_asset = { git = "https://github.com/astrotechies/unrealmodding", package = "unreal_asset" }
-zip = { version = "0.6.3", default-features = false, features = [
+zip = { version = "0.6.6", default-features = false, features = [
   "aes-crypto",
   "deflate",
   "time",
 ] }
-modio = { version = "0.7.1", features = ["rustls-tls"] }
-tokio = { version = "1.26.0", features = ["full"] }
-regex = "1.7.1"
-indicatif = "0.17.3"
-futures-util = "0.3.26"
-directories = "4.0.1"
+modio = { version = "0.7.2", features = ["rustls-tls"] }
+tokio = { version = "1.28.2", features = ["full"] }
+regex = "1.8.3"
+indicatif = "0.17.4"
+futures-util = "0.3.28"
+directories = "5.0.1"
 rpassword = "7.2.0"

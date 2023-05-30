@@ -8,7 +8,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use repak::PakReader;
-use unreal_asset::{reader::asset_trait::AssetTrait, Asset};
+use unreal_asset::{reader::archive_trait::ArchiveTrait, Asset};
 
 fn main() -> Result<()> {
     // https://github.com/mackwic/colored/issues/110
@@ -79,14 +79,13 @@ fn main() -> Result<()> {
                     let uexp = Cursor::new(pak.get(&format!("{f}.uexp"), &mut reader)?);
                     std::panic::set_hook(Box::new(|_info| {}));
                     let result = std::panic::catch_unwind(|| {
-                        let mut asset = unreal_asset::Asset::new(uasset, Some(uexp));
-                        asset.set_engine_version(
+                        unreal_asset::Asset::new(
+                            uasset,
+                            Some(uexp),
                             unreal_asset::engine_version::EngineVersion::VER_UE4_27,
-                        );
-                        asset
-                            .parse_data()
-                            .map_err(|_| anyhow!("failed to parse asset"))
-                            .and_then(|_| get_type(&asset))
+                        )
+                        .map_err(|_| anyhow!("failed to parse asset"))
+                        .and_then(|asset| get_type(&asset))
                     })
                     .map_err(|_| anyhow!("failed to parse asset"));
                     asset_types.insert(
@@ -200,15 +199,14 @@ impl AssetType {
 fn get_type<R: Read + Seek>(asset: &Asset<R>) -> Result<String> {
     use unreal_asset::exports::ExportBaseTrait;
 
-    for e in &asset.exports {
+    for e in &asset.asset_data.exports {
         let base = e.get_base_export();
         if base.outer_index.index == 0 {
             return Ok(asset
                 .get_import(base.class_index)
                 .ok_or_else(|| anyhow!("missing class import"))?
                 .object_name
-                .content
-                .to_owned());
+                .get_content());
         }
     }
     Err(anyhow!("could not determine asset class"))
