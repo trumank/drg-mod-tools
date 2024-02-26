@@ -77,24 +77,16 @@ fn main() -> Result<()> {
                         &mut reader,
                     )?);
                     let uexp = Cursor::new(pak.get(&format!("{f}.uexp"), &mut reader)?);
-                    std::panic::set_hook(Box::new(|_info| {}));
-                    let result = std::panic::catch_unwind(|| {
-                        unreal_asset::Asset::new(
-                            uasset,
-                            Some(uexp),
-                            unreal_asset::engine_version::EngineVersion::VER_UE4_27,
-                            None,
-                            true,
-                        )
-                        .map_err(|_| anyhow!("failed to parse asset"))
-                        .and_then(|asset| get_type(&asset))
-                    })
-                    .map_err(|_| anyhow!("failed to parse asset"));
-                    asset_types.insert(
-                        String::from(sanitized.join(f).to_string_lossy()),
-                        //result.map_or_else(|e| e, |e| Box::new(e)),
-                        result.and_then(|e| e),
-                    );
+                    let result = unreal_asset::Asset::new(
+                        uasset,
+                        Some(uexp),
+                        unreal_asset::engine_version::EngineVersion::VER_UE4_27,
+                        None,
+                        true,
+                    )
+                    .map_err(|_| anyhow!("failed to parse asset"))
+                    .and_then(|asset| get_type(&asset));
+                    asset_types.insert(String::from(sanitized.join(f).to_string_lossy()), result);
                 }
             }
             if !split_pairs.is_empty() {
