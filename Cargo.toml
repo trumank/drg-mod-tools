@@ -8,8 +8,8 @@ anyhow = "1.0.71"
 colored = "2.0.0"
 serde = { version = "1.0.163", features = ["derive"] }
 serde_json = "1.0.96"
-repak = { git = "https://github.com/trumank/repak.git", version = "0.1.0" }
-unreal_asset = { git = "https://github.com/astrotechies/unrealmodding", package = "unreal_asset" }
+repak = { git = "https://github.com/trumank/repak.git", features = ["oodle_implicit_dynamic"] }
+unreal_asset = { git = "https://github.com/trumank/unrealmodding", branch = "patches" }
 zip = { version = "0.6.6", default-features = false, features = [
   "aes-crypto",
   "deflate",

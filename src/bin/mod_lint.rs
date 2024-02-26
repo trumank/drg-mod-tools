@@ -7,8 +7,8 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use colored::Colorize;
-use repak::PakReader;
-use unreal_asset::{reader::archive_trait::ArchiveTrait, Asset};
+use repak::PakBuilder;
+use unreal_asset::{reader::ArchiveTrait, Asset};
 
 fn main() -> Result<()> {
     // https://github.com/mackwic/colored/issues/110
@@ -19,7 +19,7 @@ fn main() -> Result<()> {
 
     if let Some(url) = std::env::args().nth(1) {
         let mut reader = get_pak(&url)?;
-        let pak = PakReader::new_any(&mut reader, None)?;
+        let pak = PakBuilder::new().reader(&mut reader)?;
         let mount_point = PathBuf::from(pak.mount_point());
         if let Ok(sanitized) = mount_point.strip_prefix("../../../") {
             let valid_extensions =
@@ -83,6 +83,8 @@ fn main() -> Result<()> {
                             uasset,
                             Some(uexp),
                             unreal_asset::engine_version::EngineVersion::VER_UE4_27,
+                            None,
+                            true,
                         )
                         .map_err(|_| anyhow!("failed to parse asset"))
                         .and_then(|asset| get_type(&asset))
@@ -206,7 +208,7 @@ fn get_type<R: Read + Seek>(asset: &Asset<R>) -> Result<String> {
                 .get_import(base.class_index)
                 .ok_or_else(|| anyhow!("missing class import"))?
                 .object_name
-                .get_content());
+                .get_owned_content());
         }
     }
     Err(anyhow!("could not determine asset class"))

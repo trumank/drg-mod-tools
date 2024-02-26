@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use serde::{self, Deserialize};
+use serde::Deserialize;
 
 use anyhow::{anyhow, Result};
 
@@ -68,7 +68,7 @@ fn main() -> Result<()> {
             match find_mod_assets(&path) {
                 Ok(files) => {
                     for file in files {
-                        asset_owners.entry(file).or_insert(vec![]).push(mod_id);
+                        asset_owners.entry(file).or_default().push(mod_id);
                     }
                 }
                 Err(e) => println!("error reading {}: {}", path.display(), e),
@@ -94,7 +94,7 @@ fn main() -> Result<()> {
 }
 
 fn find_mod_assets<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
-    let pak = repak::PakReader::new_any(BufReader::new(File::open(path)?), None)?;
+    let pak = repak::PakBuilder::new().reader(&mut BufReader::new(File::open(path)?))?;
     let mount_point = Path::new(pak.mount_point());
     let files = pak
         .files()
