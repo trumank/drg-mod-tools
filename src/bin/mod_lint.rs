@@ -1,14 +1,16 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     io::{BufRead, BufReader, Cursor, Read, Seek},
-    path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use colored::Colorize;
 use repak::PakBuilder;
-use unreal_asset::{reader::ArchiveTrait, Asset};
+use unreal_asset::{exports::ExportBaseTrait, reader::ArchiveTrait, types::PackageIndex, Asset};
+
+use typed_path::Utf8UnixComponent as PakPathComponent;
+use typed_path::Utf8UnixPath as PakPath;
 
 fn main() -> Result<()> {
     // https://github.com/mackwic/colored/issues/110
@@ -20,33 +22,31 @@ fn main() -> Result<()> {
     if let Some(url) = std::env::args().nth(1) {
         let mut reader = get_pak(&url)?;
         let pak = PakBuilder::new().reader(&mut reader)?;
-        let mount_point = PathBuf::from(pak.mount_point());
+        let mount_point = PakPath::new(pak.mount_point());
         if let Ok(sanitized) = mount_point.strip_prefix("../../../") {
             let valid_extensions =
                 vec!["uasset", "uexp", "umap", "ubulk", "ufont", "ini", "locres"]
                     .into_iter()
-                    .collect::<HashSet<_>>();
-            let mut extraneous_files = HashSet::new();
-            let mut extensions = HashMap::new();
+                    .collect::<BTreeSet<_>>();
+            let mut extraneous_files: BTreeSet<String> = Default::default();
+            let mut extensions: BTreeMap<String, BTreeSet<String>> = Default::default();
             for f in pak.files() {
-                let path = Path::new(&f);
-                let no_ext = String::from(path.with_extension("").to_string_lossy());
+                let path = PakPath::new(&f);
                 if let Some(ext) = path.extension() {
-                    let ext = String::from(ext.to_string_lossy());
-                    if !valid_extensions.contains(ext.as_str()) {
-                        extraneous_files.insert(f);
+                    if !valid_extensions.contains(ext) {
+                        extraneous_files.insert(f.to_owned());
                     }
                     extensions
-                        .entry(no_ext)
-                        .or_insert(HashSet::new())
-                        .insert(ext);
+                        .entry(path.with_extension("").to_string())
+                        .or_default()
+                        .insert(ext.to_owned());
                 } else {
-                    extraneous_files.insert(f);
+                    extraneous_files.insert(f.to_owned());
                 }
             }
             let extraneous_files = extraneous_files
                 .into_iter()
-                .map(|f| String::from(sanitized.join(f).to_string_lossy()))
+                .map(|f| sanitized.join(f))
                 .filter(|f| f != "FSD/AssetRegistry.bin")
                 .collect::<BTreeSet<_>>();
             if !extraneous_files.is_empty() {
@@ -57,15 +57,14 @@ fn main() -> Result<()> {
             }
             let mut split_pairs = BTreeSet::new();
             let mut asset_types = BTreeMap::new();
+            let mut hierarchy: BTreeMap<String, BTreeSet<String>> = Default::default();
             for (f, ext) in extensions {
                 let uasset = ext.contains("uasset");
                 let umap = ext.contains("umap");
                 let uexp = ext.contains("uexp");
                 if (umap || uasset) != uexp {
                     for e in ext {
-                        split_pairs.insert(String::from(
-                            sanitized.join(&f).with_extension(e).to_string_lossy(),
-                        ));
+                        split_pairs.insert(sanitized.join(&f).with_extension(e));
                     }
                 } else if (umap || uasset) && uexp {
                     let uasset = Cursor::new(pak.get(
@@ -76,19 +75,38 @@ fn main() -> Result<()> {
                         },
                         &mut reader,
                     )?);
-                    let uexp = Cursor::new(pak.get(&format!("{f}.uexp"), &mut reader)?);
-                    let result = unreal_asset::Asset::new(
+
+                    let pak_path = sanitized.join(&f);
+                    let path = pak_path_to_game_path(pak_path)?;
+
+                    let asset = unreal_asset::Asset::new(
                         uasset,
-                        Some(uexp),
+                        None,
                         unreal_asset::engine_version::EngineVersion::VER_UE4_27,
                         None,
                         true,
                     )
-                    .map_err(|_| anyhow!("failed to parse asset"))
-                    .and_then(|asset| get_type(&asset));
-                    asset_types.insert(String::from(sanitized.join(f).to_string_lossy()), result);
+                    .context("failed to parse asset")?;
+
+                    if let Some(parent_path) = get_parent_path(&asset)? {
+                        let full_path = get_full_path(&path, &asset)?;
+                        hierarchy.entry(parent_path).or_default().insert(full_path);
+                    }
+
+                    //println!("  {}", get_parent_path(&asset)?);
+                    asset_types.insert(
+                        get_full_path(&path, &asset)?, /*sanitized.join(f)*/
+                        get_type(&asset),
+                    );
                 }
             }
+
+            println!("class hierarchy:");
+            let trees = build_trees(&hierarchy);
+            for tree in &trees {
+                tree.print("\t");
+            }
+
             if !split_pairs.is_empty() {
                 println!("{}", "split asset pairs:".bold());
                 for f in split_pairs {
@@ -111,7 +129,7 @@ fn main() -> Result<()> {
                     "StringTable",
                 ]
                 .into_iter()
-                .collect::<HashSet<_>>();
+                .collect::<BTreeSet<_>>();
 
                 let mut auto_verified_results = asset_types
                     .into_iter()
@@ -190,20 +208,99 @@ impl AssetType {
     }
 }
 
-fn get_type<R: Read + Seek>(asset: &Asset<R>) -> Result<String> {
-    use unreal_asset::exports::ExportBaseTrait;
+fn pak_path_to_game_path<P: AsRef<PakPath>>(pak_path: P) -> Result<String> {
+    let mut components = pak_path.as_ref().components();
+    Ok(match components.next() {
+        Some(PakPathComponent::Normal("Engine")) => match components.next() {
+            Some(PakPathComponent::Normal("Content")) => {
+                Some(PakPath::new("/Engine").join(components.as_path()))
+            }
+            Some(PakPathComponent::Normal("Plugins")) => {
+                let mut last = None;
+                loop {
+                    match components.next() {
+                        Some(PakPathComponent::Normal("Content")) => {
+                            break last.map(|plugin| {
+                                PakPath::new("/").join(plugin).join(components.as_path())
+                            })
+                        }
+                        Some(PakPathComponent::Normal(next)) => {
+                            last = Some(next);
+                        }
+                        _ => break None,
+                    }
+                }
+            }
+            _ => None,
+        },
+        Some(PakPathComponent::Normal(_)) => match components.next() {
+            Some(PakPathComponent::Normal("Content")) => {
+                Some(PakPath::new("/Game").join(components))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+    .with_context(|| format!("failed to normalize {}", pak_path.as_ref().as_str()))?
+    .to_string())
+}
 
-    for e in &asset.asset_data.exports {
+fn get_root_export<R: Read + Seek>(asset: &Asset<R>) -> Result<PackageIndex> {
+    for (i, e) in asset.asset_data.exports.iter().enumerate() {
         let base = e.get_base_export();
         if base.outer_index.index == 0 {
-            return Ok(asset
-                .get_import(base.class_index)
-                .ok_or_else(|| anyhow!("missing class import"))?
-                .object_name
-                .get_owned_content());
+            return Ok(PackageIndex::from_export(i as i32).unwrap());
         }
     }
-    Err(anyhow!("could not determine asset class"))
+    bail!("no root export")
+}
+
+fn get_type<R: Read + Seek>(asset: &Asset<R>) -> Result<String> {
+    let root = get_root_export(asset)?;
+    let class = asset
+        .get_import(
+            asset
+                .get_export(root)
+                .unwrap()
+                .get_base_export()
+                .class_index,
+        )
+        .context("missing class import")?;
+    Ok(class.object_name.get_owned_content())
+}
+
+fn get_full_path<R: Read + Seek>(path: &str, asset: &Asset<R>) -> Result<String> {
+    let root = get_root_export(asset)?;
+    Ok(asset
+        .get_export(root)
+        .unwrap()
+        .get_base_export()
+        .object_name
+        .get_content(|c| format!("{path}.{c}")))
+}
+
+fn get_parent_path<R: Read + Seek>(asset: &Asset<R>) -> Result<Option<String>> {
+    let root = get_root_export(asset)?;
+    let export = asset.get_export(root).unwrap().get_base_export();
+
+    let mut import_index = export.super_index;
+
+    if import_index.index == 0 {
+        return Ok(None);
+    }
+
+    let mut components = vec![];
+
+    while import_index.is_import() {
+        let import = asset
+            .get_import(import_index)
+            .ok_or_else(|| anyhow!("missing import"))?;
+
+        components.insert(0, import.object_name.get_owned_content());
+
+        import_index = import.outer_index;
+    }
+    Ok(Some(components.join(".")))
 }
 
 trait Reader: BufRead + Seek {}
@@ -340,4 +437,104 @@ async fn get_modio_mod(name_id: &str) -> Result<Box<dyn Reader>> {
     } else {
         Err(anyhow!("no mods returned for mod name_id {}", &name_id))
     }
+}
+
+use std::collections::HashSet;
+
+#[derive(Debug)]
+pub struct Node {
+    pub id: String,
+    pub children: Vec<Node>,
+}
+impl Node {
+    pub fn print(&self, prefix: &str) {
+        self.print_node(prefix, &mut vec![])
+    }
+    fn print_node(&self, prefix: &str, stack: &mut Vec<Edge>) {
+        print!("{prefix}");
+        for s in &*stack {
+            print!("{s}");
+        }
+
+        println!("{}", self.id);
+
+        if let Some((last, first)) = self.children.split_last() {
+            if let Some(last) = stack.last_mut() {
+                if *last == Edge::Corner {
+                    *last = Edge::None;
+                } else if *last == Edge::T {
+                    *last = Edge::Straight;
+                }
+            }
+
+            {
+                stack.push(Edge::T);
+                for child in first {
+                    child.print_node(prefix, stack);
+                }
+                stack.pop();
+            }
+
+            {
+                stack.push(Edge::Corner);
+                last.print_node(prefix, stack);
+                stack.pop();
+            }
+
+            if let Some(last) = stack.last_mut() {
+                if *last == Edge::Straight {
+                    *last = Edge::T;
+                }
+            }
+        }
+    }
+}
+#[derive(PartialEq)]
+enum Edge {
+    None,
+    Straight,
+    Corner,
+    T,
+}
+impl std::fmt::Display for Edge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Edge::None => write!(f, "    "),
+            Edge::Straight => write!(f, "│   "),
+            Edge::Corner => write!(f, "└── "),
+            Edge::T => write!(f, "├── "),
+        }
+    }
+}
+
+fn find_roots(edge_list: &BTreeMap<String, BTreeSet<String>>) -> Vec<&str> {
+    let parents = edge_list.keys().collect::<HashSet<_>>();
+    let children = edge_list.values().flatten().collect::<HashSet<_>>();
+
+    parents.difference(&children).map(|s| s.as_str()).collect()
+}
+
+fn build_node_recursively(id: &str, children_map: &BTreeMap<String, BTreeSet<String>>) -> Node {
+    let children = children_map
+        .get(id)
+        .map(|children| {
+            children
+                .iter()
+                .map(|child_id| build_node_recursively(child_id, children_map))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Node {
+        id: id.to_string(),
+        children,
+    }
+}
+
+pub fn build_trees(edge_list: &BTreeMap<String, BTreeSet<String>>) -> Vec<Node> {
+    let mut nodes = vec![];
+    for root in find_roots(edge_list) {
+        nodes.push(build_node_recursively(root, edge_list));
+    }
+    nodes
 }
